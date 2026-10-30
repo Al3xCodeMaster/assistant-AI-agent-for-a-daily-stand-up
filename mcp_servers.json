@@ -1,0 +1,20 @@
+[
+  {
+    "name": "jira",
+    "url": "https://your-jira-mcp.example.com/mcp",
+    "authorization_token": "${JIRA_MCP_TOKEN}",
+    "description": "Create and update Jira issues (tasks, bugs) with assignee and due date."
+  },
+  {
+    "name": "slack",
+    "url": "https://your-slack-mcp.example.com/mcp",
+    "authorization_token": "${SLACK_MCP_TOKEN}",
+    "description": "Post messages to Slack channels or DM teammates."
+  },
+  {
+    "name": "calendar",
+    "url": "https://your-calendar-mcp.example.com/mcp",
+    "authorization_token": "${CALENDAR_MCP_TOKEN}",
+    "description": "Create Google Calendar events and follow-up meetings."
+  }
+]
