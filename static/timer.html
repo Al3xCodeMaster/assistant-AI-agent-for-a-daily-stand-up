@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+  :root {
+    --bg: #111827; --card: #1f2937; --text: #f9fafb; --muted: #9ca3af;
+    --ok: #22c55e; --soft: #eab308; --hard: #ef4444; --speak: #38bdf8;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f3f4f6; --card: #ffffff; --text: #111827; --muted: #4b5563; }
+  }
+  :root[data-theme="dark"] { --bg: #111827; --card: #1f2937; --text: #f9fafb; --muted: #9ca3af; }
+  /* Fill the whole camera frame at any size (Recall renders it at the call's video resolution). */
+  html, body { height: 100%; }
+  body { margin: 0; padding: 3vh 3vw; box-sizing: border-box; background: var(--bg); color: var(--text);
+         font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         display: flex; flex-direction: column; overflow: hidden; }
+  header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 1vh 2vw; }
+  h1 { margin: 0; font-size: clamp(22px, 4.5vh, 48px); }
+  .project { margin: 1vh 0 0; font-size: clamp(16px, 3.2vh, 34px); font-weight: 600; color: var(--speak); }
+  .total { font-size: clamp(16px, 3.4vh, 36px); color: var(--muted); }
+  .turn { margin: 2.5vh 0; padding: 2vh 2vw; border-radius: 1.5vh; background: var(--card);
+          font-size: clamp(18px, 4vh, 42px); }
+  .turn strong { color: var(--speak); }
+  .alert { margin: 0 0 2.5vh; padding: 1.8vh 2vw; border-radius: 1.5vh; background: var(--hard);
+           color: #fff; font-size: clamp(16px, 3.6vh, 36px); min-height: 1em; display: none; }
+  .alert.show { display: block; }
+  .grid { flex: 1; min-height: 0; display: grid; gap: 2vh 2vw; align-content: stretch;
+          grid-template-columns: repeat(auto-fit, minmax(min(100%, 30vw), 1fr)); grid-auto-rows: 1fr; }
+  .person { background: var(--card); border-radius: 2vh; padding: 2.5vh 2vw; border: 0.5vh solid transparent;
+            display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+  .person.speaking { border-color: var(--speak); }
+  .live { font-size: clamp(14px, 2.6vh, 26px); color: var(--speak); margin-left: 1vw; font-weight: 600; }
+  .person.over { border-color: var(--hard); }
+  .name { font-size: clamp(18px, 4vh, 44px); font-weight: 600; margin-bottom: 1.5vh; overflow-wrap: anywhere; }
+  .time { font-size: clamp(48px, 16vh, 220px); font-variant-numeric: tabular-nums; font-weight: 700; line-height: 1; }
+  .budget { font-size: clamp(16px, 3.4vh, 36px); color: var(--muted); }
+  .bar { height: 2.2vh; border-radius: 1.1vh; background: var(--bg); overflow: hidden; margin-top: 2.5vh; }
+  .fill { height: 100%; width: 0; background: var(--ok); transition: width 0.5s, background 0.5s; }
+  .status { margin-top: 1.5vh; font-size: clamp(14px, 3vh, 30px); color: var(--muted); }
+  .offline { margin-top: 2vh; color: var(--hard); font-size: clamp(16px, 3.4vh, 34px); display: none; }
+  .offline.show { display: block; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">{{TITLE}}</h1>
+  <div class="total" id="total">--</div>
+</header>
+
+<div class="project" id="project"></div>
+<div class="turn" id="turn">Esperando a que alguien hable…</div>
+<div class="alert" id="alert" role="status"></div>
+<div class="grid" id="people"></div>
+<div class="offline" id="offline">Sin conexión con el copiloto. Reintentando…</div>
+
+<script>
+  // Relative URL: this page lives at /meetings/<bot_id>/timer, the state at /meetings/<bot_id>/timer.json
+  const STATE_URL = "timer.json";
+  const REFRESH_MS = 1000;
+
+  const fmt = (s) => {
+    const m = Math.floor(Math.max(0, s) / 60);
+    const sec = Math.floor(Math.max(0, s) % 60);
+    return `${m}:${String(sec).padStart(2, "0")}`;
+  };
+  const el = (tag, cls, text) => {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+
+  function render(state) {
+    const budget = state.budget_s;
+    document.getElementById("total").textContent =
+      `${fmt(state.used_s)} de ${fmt(state.total_s)} usados · ${fmt(budget)} por persona`;
+
+    document.getElementById("project").textContent = state.project ? `Proyecto: ${state.project}` : "";
+    const turn = document.getElementById("turn");
+    turn.replaceChildren();
+    if (state.turn.speaker) {
+      turn.append("Tiene la palabra: ", el("strong", "", state.turn.speaker),
+                  ` · ${fmt(state.turn.seconds)}`);
+    } else {
+      turn.textContent = "Esperando a que alguien hable…";
+    }
+
+    const alert = document.getElementById("alert");
+    alert.textContent = state.alert || "";
+    alert.classList.toggle("show", Boolean(state.alert));
+
+    const grid = document.getElementById("people");
+    grid.replaceChildren();
+    for (const p of state.people) {
+      const ratio = budget ? Math.min(p.seconds / budget, 1) : 0;
+      const card = el("div", "person" + (p.speaking ? " speaking" : "") + (p.over ? " over" : ""));
+      const name = el("div", "name", p.name);
+      if (p.speaking) name.append(el("span", "live", "● hablando"));
+      card.append(name,
+                  el("div", "time", fmt(p.seconds)),
+                  el("div", "budget", `de ${fmt(budget)}`));
+      const bar = el("div", "bar");
+      const fill = el("div", "fill");
+      fill.style.width = `${Math.round(ratio * 100)}%`;
+      fill.style.background = p.seconds > budget * 1.5 ? "var(--hard)"
+                            : p.seconds > budget ? "var(--soft)" : "var(--ok)";
+      bar.append(fill);
+      card.append(bar);
+      if (p.over) card.append(el("div", "status", "Se pasó del tiempo"));
+      grid.append(card);
+    }
+  }
+
+  async function poll() {
+    const offline = document.getElementById("offline");
+    try {
+      const res = await fetch(STATE_URL, { cache: "no-store" });
+      if (!res.ok) throw new Error(res.status);
+      render(await res.json());
+      offline.classList.remove("show");
+    } catch (err) {
+      offline.classList.add("show");
+    }
+  }
+
+  poll();
+  setInterval(poll, REFRESH_MS);
+</script>
+</body>
+</html>

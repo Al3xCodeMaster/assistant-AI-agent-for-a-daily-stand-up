@@ -1,0 +1,21 @@
+{
+  "events": [
+    {
+      "summary": "Daily Scrum",
+      "hangoutLink": "https://meet.google.com/aaa-bbbb-ccc",
+      "attendees": [
+        {"displayName": "Ana", "email": "ana@example.com"},
+        {"displayName": "Luis", "email": "luis@example.com"},
+        {"displayName": "Carla", "email": "carla@example.com"}
+      ]
+    },
+    {
+      "summary": "Sprint planning",
+      "hangoutLink": "https://meet.google.com/ddd-eeee-fff",
+      "attendees": [
+        {"email": "po@example.com"},
+        {"displayName": "Luis", "email": "luis@example.com"}
+      ]
+    }
+  ]
+}

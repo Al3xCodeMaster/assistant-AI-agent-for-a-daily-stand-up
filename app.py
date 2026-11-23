@@ -1,15 +1,23 @@
 """FastAPI entrypoint.  Run:  uvicorn app:app --port 8000"""
 import asyncio
+import html
 import json
 import logging
+import time
+from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 import config
+import calendar_sync
 import copilot
 import metrics
+import notify
 import recall
+import report
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("app")
@@ -20,17 +28,22 @@ class StartMeeting(BaseModel):
     meeting_url: str = ""
     agenda: str
     bot_id: str | None = None  # DRY_RUN only: attach to a fake bot id for local simulation
+    mode: Literal["general", "daily"] = "general"
+    participants: list[str] = []  # daily only: expected attendees; wins over the calendar lookup
+    title: str = ""  # meeting name, shown on the timer page and in the report
 
 
 @app.post("/meetings")
 async def start_meeting(body: StartMeeting):
     if config.DRY_RUN and body.bot_id:
-        s = copilot.start_session(body.bot_id, body.agenda)
+        s = copilot.start_session(body.bot_id, body.agenda, body.mode, body.participants, body.meeting_url,
+                                  body.title)
         return {"bot_id": s.bot_id, "dry_run": True}
     if not (config.RECALL_API_KEY and config.PUBLIC_URL and body.meeting_url):
         raise HTTPException(400, "Set RECALL_API_KEY and PUBLIC_URL, and pass meeting_url.")
     bot = await recall.create_bot(body.meeting_url, body.agenda)
-    copilot.start_session(bot["id"], body.agenda)
+    await notify.send_meeting_notice(body.title, body.meeting_url)  # team can join; bot waits for admission
+    copilot.start_session(bot["id"], body.agenda, body.mode, body.participants, body.meeting_url, body.title)
     return {"bot_id": bot["id"]}
 
 
@@ -46,7 +59,41 @@ async def meeting_state(bot_id: str):
         "utterances": len(s.utterances),
         "last_lines": [f"{u.speaker}: {u.text}" for u in s.utterances[-10:]],
         "proposals": [vars(p) for p in s.proposals.values()],
+        "mode": s.mode,
+        "timekeeper": s.timekeeper.summary(time.time()) if s.timekeeper else None,
     }
+
+
+@app.get("/meetings/{bot_id}/timer.json")
+async def timer_state(bot_id: str):
+    """Live talk-time state for the timer page (daily mode only)."""
+    s = copilot.SESSIONS.get(bot_id)
+    if not s or not s.timekeeper:
+        raise HTTPException(404)
+    return {**s.timekeeper.snapshot(time.time()), "title": s.title, "project": s.current_project,
+            "projects": s.projects}
+
+
+@app.get("/meetings/{bot_id}/timer", response_class=HTMLResponse)
+async def timer_page(bot_id: str):
+    """Page the bot shows as its camera: generated per meeting, with the meeting title filled in."""
+    s = copilot.SESSIONS.get(bot_id)
+    if not s:
+        raise HTTPException(404)
+    template = (Path(__file__).parent / "static" / "timer.html").read_text(encoding="utf-8")
+    return HTMLResponse(template.replace("{{TITLE}}", html.escape(s.title or "Daily")))
+
+
+@app.get("/meetings/{bot_id}/report")
+async def meeting_report(bot_id: str):
+    """Daily report for planning and retrospective: live while the meeting runs, saved file afterwards."""
+    s = copilot.SESSIONS.get(bot_id)
+    if s:
+        return report.build_report(s)
+    saved = report.load_report(bot_id)
+    if saved is None:
+        raise HTTPException(404)
+    return saved
 
 
 @app.get("/meetings/{bot_id}/metrics")
@@ -90,6 +137,37 @@ async def all_metrics():
 async def leave(bot_id: str):
     await recall.leave_call(bot_id)
     copilot.end_session(bot_id)
+    return {"ok": True}
+
+
+@app.get("/calendar/google/connect")
+async def google_connect():
+    """Start the Google OAuth flow. Open this URL once per Google account."""
+    if not (config.GOOGLE_OAUTH_CLIENT_ID and config.GOOGLE_OAUTH_CLIENT_SECRET and config.PUBLIC_URL):
+        raise HTTPException(400, "Set GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET and PUBLIC_URL.")
+    return RedirectResponse(calendar_sync.auth_url())
+
+
+@app.get("/calendar/google/callback")
+async def google_callback(code: str = "", state: str = "", error: str = ""):
+    if error or not calendar_sync.consume_state(state) or not code:
+        raise HTTPException(400, "Google authorization failed or expired; start again from /calendar/google/connect")
+    refresh_token = await calendar_sync.exchange_code(code)
+    calendar_id = await calendar_sync.create_recall_calendar(refresh_token)
+    calendar_sync.save_calendar(calendar_id)
+    return {"ok": True, "calendar_id": calendar_id}
+
+
+@app.post("/webhooks/recall-calendar")
+async def recall_calendar_webhook(request: Request):
+    raw = await request.body()
+    try:
+        recall.verify_request(config.RECALL_VERIFICATION_SECRET, dict(request.headers), raw)
+    except ValueError as e:
+        log.warning("Rejected calendar webhook: %s", e)
+        raise HTTPException(401, "invalid signature")
+    evt = json.loads(raw)
+    log.info("calendar event %s for calendar %s", evt.get("event"), evt.get("data", {}).get("calendar_id"))
     return {"ok": True}
 
 

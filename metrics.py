@@ -135,9 +135,9 @@ class MeetingMetrics:
         s = self.summary(now)
         f, m = s["focus"], s["mcp"]
         mins = s["meeting_seconds"] / 60
-        return (f"Stats ({mins:.0f} min): {f['in_topic_pct']}% in-topic, {f['off_topic_pct'] + f['drifting_pct']:.1f}% "
-                f"off/drifting, {f['unclassified_pct']}% unclassified. MCP: {m['executions_ok']} actions done "
-                f"({m['tool_calls']} tool calls), {m['executions_failed']} failed.")
+        return (f"Estadísticas ({mins:.0f} min): {f['in_topic_pct']}% en tema, {f['off_topic_pct'] + f['drifting_pct']:.1f}% "
+                f"fuera de tema, {f['unclassified_pct']}% sin clasificar. MCP: {m['executions_ok']} acciones ok "
+                f"({m['tool_calls']} llamadas), {m['executions_failed']} fallidas.")
 
     def persist(self) -> Path | None:
         """Append the final summary to METRICS_DIR/meetings.jsonl (once per meeting)."""

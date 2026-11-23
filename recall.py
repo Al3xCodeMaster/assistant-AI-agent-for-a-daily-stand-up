@@ -14,6 +14,14 @@ def _base() -> str:
     return f"https://{config.RECALL_REGION}.recall.ai/api/v1"
 
 
+def base_v2() -> str:
+    return _base().replace("/api/v1", "/api/v2")
+
+
+def headers() -> dict:
+    return _headers()
+
+
 def _headers() -> dict:
     return {
         "Authorization": config.RECALL_API_KEY,
@@ -22,26 +30,41 @@ def _headers() -> dict:
     }
 
 
+def transcript_config() -> dict:
+    """Transcript block. meeting_captions uses Google Meet's own captions (no Recall transcription charge);
+    recallai streams from Recall's engine. Choose with TRANSCRIPT_PROVIDER."""
+    if config.TRANSCRIPT_PROVIDER == "recallai":
+        return {
+            "provider": {
+                "recallai_streaming": {
+                    # Low latency only supports English. Other languages need prioritize_accuracy,
+                    # which delays utterances by minutes: timing comes from speech events instead.
+                    "mode": "prioritize_low_latency" if config.TRANSCRIPT_LANGUAGE == "en" else "prioritize_accuracy",
+                    "language_code": config.TRANSCRIPT_LANGUAGE,
+                }
+            },
+            "diarization": {"use_separate_streams_when_available": True},
+        }
+    # Meet captions: language goes inside meeting_captions; no diarization option (speakers come from the audio streams).
+    return {"provider": {"meeting_captions": {"language_code": config.TRANSCRIPT_LANGUAGE}}}
+
+
 def build_bot_payload(meeting_url: str, agenda: str) -> dict:
     return {
         "meeting_url": meeting_url,
         "bot_name": config.BOT_NAME,
         "recording_config": {
-            "transcript": {
-                "provider": {
-                    "recallai_streaming": {
-                        # The default mode (prioritize_accuracy) delays utterances by minutes.
-                        "mode": "prioritize_low_latency",
-                        "language_code": config.TRANSCRIPT_LANGUAGE,
-                    }
-                },
-                "diarization": {"use_separate_streams_when_available": True},
-            },
+            "transcript": transcript_config(),
             "realtime_endpoints": [
                 {
                     "type": "webhook",
                     "url": f"{config.PUBLIC_URL}/webhooks/recall",
-                    "events": ["transcript.data", "participant_events.chat_message"],
+                    "events": [
+                        "transcript.data",
+                        "participant_events.chat_message",
+                        "participant_events.speech_on",
+                        "participant_events.speech_off",
+                    ],
                 }
             ],
         },
@@ -50,8 +73,8 @@ def build_bot_payload(meeting_url: str, agenda: str) -> dict:
                 "send_to": "everyone",
                 "pin": True,
                 "message": (
-                    f"{config.CHAT_PREFIX} Hi! I'm transcribing this meeting to track action items "
-                    "and keep us on the agenda. Reply 'ok <n>' / 'no <n>' to my proposals."
+                    f"{config.CHAT_PREFIX} Hola, soy el copiloto de la reunión. Transcribo para registrar acciones y cuidar los tiempos. "
+                    "Responde 'ok <n>' o 'no <n>' a mis propuestas."
                 )[:500],
             }
         },
@@ -90,6 +113,20 @@ async def send_chat(bot_id: str, message: str, pin: bool = False) -> None:
         )
         if r.status_code >= 300:
             log.error("send_chat failed %s: %s", r.status_code, r.text[:300])
+
+
+async def start_output_media(bot_id: str, url: str) -> None:
+    """Show a webpage as the bot's camera, so everyone in the meeting sees it. Needs the bot inside the call."""
+    body = {"camera": {"kind": "webpage", "config": {"url": url}}}
+    if config.DRY_RUN:
+        print(f"[output_media → {bot_id}] {url}")
+        return
+    import httpx
+
+    async with httpx.AsyncClient(timeout=20) as http:
+        r = await http.post(f"{_base()}/bot/{bot_id}/output_media/", headers=_headers(), json=body)
+        if r.status_code >= 300:
+            log.error("output_media failed %s: %s", r.status_code, r.text[:300])
 
 
 async def leave_call(bot_id: str) -> None:

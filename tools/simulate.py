@@ -33,6 +33,16 @@ SCRIPT = [
     ("Luis", "We should all go to a game together sometime, maybe in December."),
 ]
 
+DAILY_PARTICIPANTS = ["Ana", "Luis", "Carla"]
+DAILY_SCRIPT = [
+    ("Ana", "Yesterday I finished the iOS build and pushed the login fix. Today I review the crash ticket. "
+            "No blockers from my side, but I want to spend a few minutes on the release date because the QA "
+            "report changed, the crash is worse on older phones, and we need to decide whether we hold the "
+            "November twelfth date or move it, and who owns the rollback plan if we ship anyway."),
+    ("Luis", "Yesterday I worked on the crash. Today I keep going on it. I'm blocked on the Apple sandbox account."),
+    ("Carla", "Yesterday I wrote the support hiring brief. Today the pricing review. No blockers."),
+]
+
 
 def post(url: str, body: dict, signed: bool = True) -> None:
     raw = json.dumps(body).encode()
@@ -77,11 +87,19 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://localhost:8000")
     ap.add_argument("--speed", type=float, default=3.0, help="seconds between utterances")
+    ap.add_argument("--mode", choices=["general", "daily"], default="general")
     args = ap.parse_args()
 
-    post(f"{args.url}/meetings", {"agenda": AGENDA, "bot_id": BOT_ID}, signed=False)
+    if args.mode == "daily":
+        body = {"agenda": "Daily: yesterday, today, blockers", "bot_id": BOT_ID, "mode": "daily",
+                "participants": DAILY_PARTICIPANTS}
+        script = DAILY_SCRIPT
+    else:
+        body = {"agenda": AGENDA, "bot_id": BOT_ID}
+        script = SCRIPT
+    post(f"{args.url}/meetings", body, signed=False)
     ids = {}
-    for speaker, text in SCRIPT:
+    for speaker, text in script:
         ids.setdefault(speaker, len(ids) + 100)
         print(f"{speaker}: {text}")
         post(f"{args.url}/webhooks/recall", transcript_event(speaker, text, ids[speaker]))

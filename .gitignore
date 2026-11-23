@@ -1,0 +1,19 @@
+# Secrets: never commit real keys
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Runtime output (meetings.jsonl holds per-person talk time: personal data)
+metrics/
+stubs/calls.jsonl
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+data/

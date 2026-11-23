@@ -13,8 +13,14 @@
   },
   {
     "name": "calendar",
-    "url": "https://your-calendar-mcp.example.com/mcp",
+    "url": "${CALENDAR_MCP_URL}",
     "authorization_token": "${CALENDAR_MCP_TOKEN}",
     "description": "Create Google Calendar events and follow-up meetings."
+  },
+  {
+    "name": "openproject",
+    "url": "${OPENPROJECT_MCP_URL}",
+    "authorization_token": "${OPENPROJECT_MCP_TOKEN}",
+    "description": "OpenProject work packages (HU) of the SIRAP project: list blocked HU and their blockers, read a HU, list assignable users, change status or assignee, comment (meeting notes, metrics, unblock plans), and create follow-up work packages."
   }
 ]
