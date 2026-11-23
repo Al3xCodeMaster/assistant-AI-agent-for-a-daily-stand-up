@@ -1,0 +1,106 @@
+services:
+  app:
+    build: .
+    image: meet-copilot:local
+    ports:
+      - "${PORT:-8000}:8000"
+    env_file:
+      - path: .env
+        required: false  # local tests run without a .env
+    environment:
+      # Overrides .env on purpose: the container always uses its own volumes
+      - METRICS_DIR=/app/metrics
+      - CALENDAR_DB=/app/data/calendars.json
+      # Set DRY_RUN=true in .env or your shell to print chat messages instead of calling Recall
+      - DRY_RUN=${DRY_RUN:-false}
+      # Pass-through by name: uses the host value when set, otherwise the value from .env
+      - RECALL_API_KEY
+      - RECALL_VERIFICATION_SECRET
+      - PUBLIC_URL
+      - GEMINI_API_KEY
+      - CALENDAR_MCP_URL
+      - CALENDAR_MCP_TOKEN
+      - JIRA_MCP_TOKEN
+      - SLACK_MCP_TOKEN
+      - GOOGLE_OAUTH_CLIENT_ID
+      - GOOGLE_OAUTH_CLIENT_SECRET
+      - NOTIFY_WEBHOOK_URL
+      - DAILY_TOTAL_S
+      - DAILY_MIN_TURN_S
+    volumes:
+      - metrics:/app/metrics   # meetings.jsonl and daily/ reports: keep them
+      - data:/app/data         # Google calendar ids (CALENDAR_DB)
+    restart: unless-stopped
+
+  # Local Calendar MCP stub for controlled tests. Opt in: docker compose --profile stub up -d
+  # Anthropic cannot reach localhost: expose port 9000 through an HTTPS tunnel and set CALENDAR_MCP_URL to it.
+  calendar-stub:
+    build: ./stubs
+    image: calendar-stub:local
+    profiles: ["stub"]
+    ports:
+      - "9000:9000"
+    environment:
+      # Empty by default on purpose: a :? here would break `docker compose up` for everyone.
+      # The stub refuses to start without a token.
+      - CALENDAR_STUB_TOKEN=${CALENDAR_MCP_TOKEN:-}
+    volumes:
+      - stub-data:/data
+    restart: unless-stopped
+
+  # Real Google Calendar MCP server (opt in: docker compose --profile gcal up -d --build gcal-mcp).
+  # Reads its own Google credentials from .env. Anthropic must reach it over public HTTPS:
+  # put a reverse proxy or tunnel in front of port 9100 and set CALENDAR_MCP_URL to that address.
+  gcal-mcp:
+    build:
+      context: .
+      dockerfile: gcal_mcp/Dockerfile
+    image: gcal-mcp:local
+    profiles: ["gcal"]
+    ports:
+      - "9100:9100"
+    environment:
+      - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID:-}
+      - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      - GOOGLE_REFRESH_TOKEN=${GOOGLE_REFRESH_TOKEN:-}
+      - GCAL_CALENDAR_ID=${GCAL_CALENDAR_ID:-primary}
+      # Same value as CALENDAR_MCP_TOKEN: the app sends it as the bearer token
+      - GCAL_MCP_TOKEN=${CALENDAR_MCP_TOKEN:-}
+    restart: unless-stopped
+
+  # OpenProject MCP server (opt in: docker compose --profile openproject up -d --build openproject-mcp).
+  # Talks to your OpenProject instance at OPENPROJECT_URL (API v3, key from OPENPROJECT_API_KEY).
+  # Anthropic must reach it over public HTTPS: Caddy routes /openproject-mcp* to port 9200 (deploy/Caddyfile).
+  openproject-mcp:
+    build:
+      context: .
+      dockerfile: openproject_mcp/Dockerfile
+    image: openproject-mcp:local
+    profiles: ["openproject"]
+    ports:
+      - "9200:9200"
+    environment:
+      - OPENPROJECT_URL=${OPENPROJECT_URL:-}
+      - OPENPROJECT_API_KEY=${OPENPROJECT_API_KEY:-}
+      # Same value as OPENPROJECT_MCP_TOKEN: the app sends it as the bearer token
+      - OPENPROJECT_MCP_TOKEN=${OPENPROJECT_MCP_TOKEN:-}
+    restart: unless-stopped
+
+  # Public HTTPS entry point for Anthropic's MCP connector (opt in: --profile public).
+  # Routes deploy/Caddyfile: /openproject-mcp* -> openproject-mcp, /mcp* -> gcal-mcp, rest -> app.
+  # Point the ngrok/tunnel of PUBLIC_URL at port 8080 so Recall webhooks and MCP calls both arrive here.
+  caddy:
+    image: caddy:2
+    profiles: ["public"]
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+    restart: unless-stopped
+
+volumes:
+  metrics:
+  data:
+  stub-data:
